@@ -64,6 +64,7 @@ int main()
 	Mat frame; 
 	Mat foreground,background,gray,gray2,result2,foreground0;	// 前景图片
 	Mat mask(240, 320, CV_8UC1,255);
+	Mat liantong(240, 320, CV_8UC1,255);
 	IplImage front,frameO,frame1;
 	CvMemStorage *stor;
     CvSeq *cont, *result, *squares;
@@ -89,7 +90,7 @@ int main()
 	namedWindow("result");
 	namedWindow("mask2");
 	namedWindow("part3");
-	//namedWindow("ws1");
+	namedWindow("ws");
 	//namedWindow("ws2");
 	int count=0;
 	// 混合高斯物体
@@ -104,12 +105,12 @@ int main()
 		 
 		if(count==0){
 		// 更新背景图片并且输出前景
-		mog(frame,mask,foreground,updateFlag,0.01);
+		mog(frame,mask,liantong,foreground,updateFlag,0.01);
 		mog.getBackgroundImage(background);
 		mask(Rect(1,1,318,238))=255;
 		mask2(Rect(1,1,318,238))=255;
 		}
-		
+
 		imshow("Source Video", frame);
 
 
@@ -121,10 +122,10 @@ int main()
 		threshold(result2, result2, 10, 255, THRESH_BINARY_INV);
 		imshow("part1", result2);
 
-			//extra1
-			//辅助操作，初始化和环境突变（非闪光灯）的时候整帧更新
-			updateFlag=getUpdateFlag(count,frame);
-
+		//extra1
+		//辅助操作，初始化和环境突变（非闪光灯）的时候整帧更新
+		updateFlag=getUpdateFlag(count,frame);
+		updateFlag=1;
 
 		front=IplImage(result2);
 		frameO=IplImage(frame);
@@ -151,13 +152,44 @@ int main()
 		//part2 
 		//精确提取运动区域
 		// 更新背景图片并且输出前景
-		mog(frame,mask,foreground,updateFlag,0.01);
+		mog(frame,mask,liantong,foreground,updateFlag,0.01);
 		mog.getBackgroundImage(background);
 		imshow("background", background);
 		mask(Rect(1,1,318,238))=255;
 		// 输出的前景图片并不是2值图片，要处理一下显示  
 		threshold(foreground, foreground, 128, 255, THRESH_BINARY_INV);
 		imshow("part2", foreground);
+
+		//extra2
+		//得到连通域特性mat
+		int width=320,height=240;
+		for (int j=0; j<height; j++){  
+			int prevj=j-1,nextj=j+1;
+			if(j==0){prevj=0;}
+			if(j==height-1){nextj=height-1;}
+			uchar* data= foreground.ptr<uchar>(j);
+			uchar* dataprev= foreground.ptr<uchar>(prevj);
+			uchar* datanext= foreground.ptr<uchar>(nextj);
+			uchar* datalt= liantong.ptr<uchar>(j);
+          for (int i=0; i<width; i++){  
+				 int arr[8];
+				 int previ=i-1,nexti=i+1;
+				 if(i==0){previ=0;}
+				 if(i==width-1){nexti=width-1;}
+				unsigned char code = 0;  
+				code |= (dataprev[previ] == 255) << 7;  
+				code |= (dataprev[i] == 255) << 6;  
+				code |= (dataprev[nexti] == 255) << 5;  
+				code |= (data[nexti] == 255) << 4;
+				code |= (datanext[nexti] == 255) << 3;  
+				code |= (datanext[i] == 255) << 2;
+				code |= (datanext[previ] == 255) << 1;  
+				code |= (data[previ] == 255) << 0;
+                datalt[i]=code; 
+				}                    
+		  }
+		imshow("ws",liantong);
+		//end extra2
 
 		//腐蚀膨胀一下
 		morphologyEx(foreground,foreground0,MORPH_CLOSE,Mat(3,3,CV_8U),Point(-1,-1),1);
@@ -178,9 +210,13 @@ int main()
 				     {
 					  cvRectangle(&frame1, cvPoint(r.x,r.y),cvPoint(r.x + r.width, r.y + r.height),CV_RGB(255,0,0), 1, CV_AA,0);
 					  mask2(Rect(r.x,r.y,r.width,r.height))=0;
-					  		//part3 		
-							//Mat dst(frame, Rect(r.x,r.y,r.width,r.height));
-							//imshow("dst",dst);
+					  		//part3 	
+					  /*if(count>55){
+							Mat dst(frame, Rect(r.x,r.y,r.width,r.height));
+							imshow("dst",dst);
+							imwrite("d:\\test.jpg",dst);
+					  }*/
+							
 				  }
 		}
 		//cvShowImage("result",&frame1);
@@ -285,7 +321,7 @@ int main()
 
 		count++;
 		cout<<count<<endl;
-		if(count>54){
+		if(count>18){
 			cvWaitKey(0);
 		}
 		

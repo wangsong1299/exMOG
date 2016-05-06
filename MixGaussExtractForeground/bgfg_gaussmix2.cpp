@@ -250,7 +250,7 @@ detectShadowGMM(const float* data, int nchannels, int nmodes,
 
 struct MOG2Invoker : ParallelLoopBody
 {
-    MOG2Invoker(const Mat& _src, Mat& _ydmask,Mat& _dst,int nframes,int updateFlag,
+    MOG2Invoker(const Mat& _src, Mat& _ydmask,Mat& _liantong,Mat& _dst,int nframes,int updateFlag,
                 GMM* _gmm, float* _mean,
                 uchar* _modesUsed,
                 int _nmixtures, float _alphaT,
@@ -261,6 +261,7 @@ struct MOG2Invoker : ParallelLoopBody
     {
         src = &_src;
 		ydmask = &_ydmask;
+		liantong = &_liantong;
 		frames = nframes;
 		flag = updateFlag;
         dst = &_dst;
@@ -306,9 +307,11 @@ struct MOG2Invoker : ParallelLoopBody
             uchar* modesUsed = modesUsed0 + ncols*y;
             uchar* mask = dst->ptr(y);
 			uchar* ydmaskdata= ydmask->ptr(y); 
+			uchar* liantongdata= liantong->ptr(y);
 
             for( int x = 0; x < ncols; x++, data += nchannels, gmm += nmixtures, mean += nmixtures*nchannels )
             {
+		//整帧更新
 			if(flag==1){
                 //calculate distances to the modes (+ sort)
                 //here we need to go in descending order!!!
@@ -462,6 +465,20 @@ struct MOG2Invoker : ParallelLoopBody
                     }
                 }
 
+				//如果被判断为了前景点，再根据连通域特征去做进一步检测
+				if(!background){
+					int liantongbyte=liantongdata[x];
+					int bit2=(liantongbyte/2)%2,bit4=(liantongbyte/8)%2,bit6=(liantongbyte/32)%2,bit8=(liantongbyte/128)%2;
+					int bitcount=(bit2==0)+(bit4==0)+(bit6==0)+(bit8==0);
+					if(liantongbyte==0){
+						background=true;
+					}else if(bitcount==3||bitcount==4){
+						background=true;
+					}else if((bitcount==2)&&(!(liantongbyte==27||liantongbyte==30||liantongbyte==51||liantongbyte==54||liantongbyte==57||liantongbyte==150||liantongbyte==153||liantongbyte==156))){
+						background=true;
+					}
+				}
+
                 //set the number of modes
                 modesUsed[x] = uchar(nmodes);
                 mask[x] = background ? 0 :
@@ -470,6 +487,7 @@ struct MOG2Invoker : ParallelLoopBody
 			}else{
 ///非整帧更新
 				if(ydmaskdata[x]==0){
+///mask=0是运动区域
                 //calculate distances to the modes (+ sort)
                 //here we need to go in descending order!!!
                 bool background = false;//return value -> true - the pixel classified as background
@@ -619,15 +637,27 @@ struct MOG2Invoker : ParallelLoopBody
                             std::swap(mean[i*nchannels + c], mean[(i-1)*nchannels + c]);
                     }
                 }
-
+				////如果被判断为了前景点，再根据连通域特征去做进一步检测
+				//if(!background){
+				//	int liantongbyte=liantongdata[x];
+				//	int bit2=(liantongbyte/2)%2,bit4=(liantongbyte/8)%2,bit6=(liantongbyte/32)%2,bit8=(liantongbyte/128)%2;
+				//	int bitcount=(bit2==0)+(bit4==0)+(bit6==0)+(bit8==0);
+				//	if(liantongbyte==0){
+				//		background=true;
+				//	}else if(bitcount==3||bitcount==4){
+				//		background=true;
+				//	}else if((bitcount==2)&&(!(liantongbyte==27||liantongbyte==30||liantongbyte==51||liantongbyte==54||liantongbyte==57||liantongbyte==150||liantongbyte==153||liantongbyte==156))){
+				//		background=true;
+				//	}
+				//}
                 //set the number of modes
                 modesUsed[x] = uchar(nmodes);
                 mask[x] = background ? 0 :
                     detectShadows && detectShadowGMM(data, nchannels, nmodes, gmm, mean, Tb, TB, tau) ?
                     shadowVal : 255;
 			}else{//ws
+///静止区域以帧为整体进行随机更新
 				if(rand==0){//wsrand
-				
                 //calculate distances to the modes (+ sort)
                 //here we need to go in descending order!!!
                 bool background = false;//return value -> true - the pixel classified as background
@@ -700,7 +730,19 @@ struct MOG2Invoker : ParallelLoopBody
                 }
                 //go through all modes
 
-
+				//如果被判断为了前景点，再根据连通域特征去做进一步检测
+				if(!background){
+					int liantongbyte=liantongdata[x];
+					int bit2=(liantongbyte/2)%2,bit4=(liantongbyte/8)%2,bit6=(liantongbyte/32)%2,bit8=(liantongbyte/128)%2;
+					int bitcount=(bit2==0)+(bit4==0)+(bit6==0)+(bit8==0);
+					if(liantongbyte==0){
+						background=true;
+					}else if(bitcount==3||bitcount==4){
+						background=true;
+					}else if((bitcount==2)&&(!(liantongbyte==27||liantongbyte==30||liantongbyte==51||liantongbyte==54||liantongbyte==57||liantongbyte==150||liantongbyte==153||liantongbyte==156))){
+						background=true;
+					}
+				}
 
                 //set the number of modes
                 modesUsed[x] = uchar(nmodes);
@@ -719,6 +761,7 @@ struct MOG2Invoker : ParallelLoopBody
 
     const Mat* src;
 	Mat* ydmask;
+	Mat* liantong;
     Mat* dst;
 	int frames;
 	int flag;
@@ -804,10 +847,11 @@ void BackgroundSubtractorMOG2::initialize(Size _frameSize, int _frameType)
     bgmodelUsedModes = Scalar::all(0);
 }
 
-void BackgroundSubtractorMOG2::operator()(InputArray _image,InputArray _mask, OutputArray _fgmask,int updateFlag, double learningRate)
+void BackgroundSubtractorMOG2::operator()(InputArray _image,InputArray _mask,InputArray _liantong, OutputArray _fgmask,int updateFlag, double learningRate)
 {
     Mat image = _image.getMat();
 	Mat ydmask = _mask.getMat();
+	Mat liantong = _liantong.getMat();
     bool needToInitialize = nframes == 0 || learningRate >= 1 || image.size() != frameSize || image.type() != frameType;
 
     if( needToInitialize )
@@ -821,7 +865,7 @@ void BackgroundSubtractorMOG2::operator()(InputArray _image,InputArray _mask, Ou
     CV_Assert(learningRate >= 0);
 
     parallel_for_(Range(0, image.rows),
-                  MOG2Invoker(image,ydmask,fgmask,nframes,updateFlag,
+                  MOG2Invoker(image,ydmask,liantong,fgmask,nframes,updateFlag,
                               (GMM*)bgmodel.data,
                               (float*)(bgmodel.data + sizeof(GMM)*nmixtures*image.rows*image.cols),
                               bgmodelUsedModes.data, nmixtures, (float)learningRate,
